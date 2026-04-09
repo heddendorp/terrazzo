@@ -29,12 +29,16 @@ export async function getVariables(
   let finalVariables: Record<string, LocalVariable> = {};
   const modeIDToName: Record<string, string> = {}; // Note: this can have duplicate values; they’ll be scoped in separate modifier contexts
 
+  function getAliasID(value: LocalVariable['valuesByMode'][string]) {
+    if (!value || typeof value !== 'object' || !('type' in value) || value.type !== 'VARIABLE_ALIAS') {
+      return;
+    }
+    return 'id' in value && typeof value.id === 'string' ? value.id : undefined;
+  }
+
   // We must always fetch local variables, no matter what, to get the data we need
   const local = await getFileLocalVariables(fileKey, { logger });
   for (const id of Object.keys(local.meta.variables)) {
-    if (local.meta.variables[id]!.hiddenFromPublishing) {
-      continue;
-    }
     allVariables[id] = local.meta.variables[id]!;
   }
   for (const id of Object.keys(local.meta.variableCollections)) {
@@ -46,11 +50,32 @@ export async function getVariables(
 
   // If --unpublished is set, we’re ready to transform; otherwise, filter set from latest publish
   if (unpublished) {
-    finalVariables = allVariables;
+    for (const id of Object.keys(allVariables)) {
+      if (!allVariables[id]!.hiddenFromPublishing) {
+        finalVariables[id] = allVariables[id]!;
+      }
+    }
   } else {
     const published = await getFilePublishedVariables(fileKey, { logger });
     for (const id of Object.keys(published.meta.variables)) {
       finalVariables[id] = allVariables[id]!;
+    }
+  }
+
+  // Include any local alias targets needed to keep the exported token graph buildable.
+  const pendingIDs = Object.keys(finalVariables);
+  while (pendingIDs.length) {
+    const id = pendingIDs.pop()!;
+    const variable = finalVariables[id];
+    if (!variable) {
+      continue;
+    }
+    for (const value of Object.values(variable.valuesByMode)) {
+      const aliasID = getAliasID(value);
+      if (aliasID && allVariables[aliasID] && !finalVariables[aliasID]) {
+        finalVariables[aliasID] = allVariables[aliasID]!;
+        pendingIDs.push(aliasID);
+      }
     }
   }
 
@@ -108,8 +133,7 @@ export async function getVariables(
       };
 
       // If this token is an alias of another, keep this as a value override
-      const isAliasOfID =
-        (typeof value === 'object' && 'type' in value && value.type === 'VARIABLE_ALIAS' && value.id) || undefined;
+      const isAliasOfID = getAliasID(value);
       if (isAliasOfID) {
         if (allVariables[isAliasOfID]) {
           tokenBase.$type =
@@ -125,7 +149,8 @@ export async function getVariables(
         tokenBase.$value = String(value).split(',');
       } else if (matches === 'fontWeight') {
         tokenBase.$type = 'fontWeight';
-        tokenBase.$value = value;
+        tokenBase.$value =
+          typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : value;
       } else if (matches === 'number') {
         if (typeof value === 'object') {
           throw new Error(`Can’t coerce ${variable.name} into number type.`);
