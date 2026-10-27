@@ -7,7 +7,7 @@ import { effectStyle } from '../src/import/figma/styles.js';
 
 const fileKey = 'test';
 function alias(id: string) {
-  return { type: 'VARIABLE_ALIAS', id };
+  return { type: 'VARIABLE_ALIAS' as const, id };
 }
 const blue = { r: 0.13, g: 0.25, b: 0.85, a: 0.75 };
 const shadow = {
@@ -145,6 +145,62 @@ describe('Figma effect variable bindings', () => {
   it('warns and uses the raw value for an unavailable binding', () => {
     const logger = { warn: vi.fn() };
     const result = effectStyle(node as Node, { variables: {}, logger: logger as never });
+    expect(result?.[0]?.color).toEqual({
+      colorSpace: 'srgb',
+      components: [0.13, 0.25, 0.85],
+      alpha: 0.75,
+    });
+    expect(logger.warn).toHaveBeenCalled();
+  });
+
+  it('retains raw color when an available variable has an unavailable alias dependency', async () => {
+    const { local } = mockFigma();
+    local.variables.ring!.valuesByMode.light = alias('unavailable-remote');
+    const result = await importFromFigma({
+      url: `https://www.figma.com/design/${fileKey}`,
+      logger: new Logger(),
+    });
+    expect(result.code.sets.styles.sources[0].focus.$value[0].color.components).toEqual([
+      0.13, 0.25, 0.85,
+    ]);
+    expect(result.code.modifiers.theme.contexts.light[0]).not.toHaveProperty('ring');
+    const parsed = await parse(
+      {
+        src: JSON.stringify(result.code),
+        filename: new URL('file:///tmp/missing-style-dependency.json'),
+      },
+      { config: defineConfig({}, { cwd: new URL('file:///tmp/') }) },
+    );
+    expect(parsed.tokens.focus).toBeDefined();
+  });
+
+  it('retains raw dimensions when number-name matching changes the imported type', async () => {
+    mockFigma();
+    const result = await importFromFigma({
+      url: `https://www.figma.com/design/${fileKey}`,
+      logger: new Logger(),
+      numberNames: '^zero$',
+    });
+    expect(result.code.sets.styles.sources[0].focus.$value[0].blur).toEqual({
+      value: 0,
+      unit: 'px',
+    });
+    expect(result.code.sets.base.sources[0]).not.toHaveProperty('zero');
+    const parsed = await parse(
+      {
+        src: JSON.stringify(result.code),
+        filename: new URL('file:///tmp/matched-style-type.json'),
+      },
+      { config: defineConfig({}, { cwd: new URL('file:///tmp/') }) },
+    );
+    expect(parsed.tokens.focus).toBeDefined();
+  });
+
+  it('rejects cyclic binding dependencies rather than emitting a cyclic reference', () => {
+    const variables = fixture().variables;
+    variables.ring!.valuesByMode.light = alias('ring');
+    const logger = { warn: vi.fn() };
+    const result = effectStyle(node as Node, { variables, logger: logger as never });
     expect(result?.[0]?.color).toEqual({
       colorSpace: 'srgb',
       components: [0.13, 0.25, 0.85],

@@ -19,6 +19,7 @@ import type {
 } from '@terrazzo/parser';
 
 import { formatName, getFile, getFileNodes, getFileStyles } from './lib.js';
+import { canImportStyleBinding, type VariableMatchers } from './variable-bindings.js';
 
 /** /v1/files/:file_key/styles */
 export async function getStyles(
@@ -27,7 +28,13 @@ export async function getStyles(
     logger,
     unpublished,
     variables,
-  }: { logger: Logger; unpublished?: boolean; variables?: Record<string, LocalVariable> },
+    matchers,
+  }: {
+    logger: Logger;
+    unpublished?: boolean;
+    variables?: Record<string, LocalVariable>;
+    matchers?: VariableMatchers;
+  },
 ): Promise<{ count: number; code: any; variableIDs: Set<string> }> {
   const result: { count: number; code: any; variableIDs: Set<string> } = {
     count: 0,
@@ -121,6 +128,7 @@ export async function getStyles(
           variables,
           variableIDs: result.variableIDs,
           logger,
+          matchers,
         });
         if (!$value) {
           logger.warn({
@@ -185,7 +193,13 @@ export function effectStyle(
     variables,
     variableIDs = new Set(),
     logger,
-  }: { variables?: Record<string, LocalVariable>; variableIDs?: Set<string>; logger?: Logger } = {},
+    matchers,
+  }: {
+    variables?: Record<string, LocalVariable>;
+    variableIDs?: Set<string>;
+    logger?: Logger;
+    matchers?: VariableMatchers;
+  } = {},
 ): ShadowValue[] | undefined {
   if ('effects' in node) {
     const shadows = node.effects.filter(
@@ -201,8 +215,11 @@ export function effectStyle(
           if (!variables || !id) {
             return fallback;
           }
-          const variable = variables[id];
-          if (!variable) {
+          const importable = canImportStyleBinding(id, field === 'color' ? 'color' : 'dimension', {
+            variables,
+            matchers,
+          });
+          if (!importable) {
             logger?.warn({
               group: 'import',
               message: `Unable to resolve shadow ${field} binding ${id}; using the raw value.`,
@@ -210,7 +227,7 @@ export function effectStyle(
             return fallback;
           }
           variableIDs.add(id);
-          return `{${variable.name.split('/').map(formatName).join('.')}}`;
+          return `{${variables[id]!.name.split('/').map(formatName).join('.')}}`;
         }
         return {
           inset: s.type === 'INNER_SHADOW',

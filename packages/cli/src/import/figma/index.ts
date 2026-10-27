@@ -56,6 +56,11 @@ export async function importFromFigma({
   };
 
   try {
+    const matchers = {
+      fontFamily: fontFamilyNames ? new RegExp(fontFamilyNames) : undefined,
+      fontWeight: fontWeightNames ? new RegExp(fontWeightNames) : undefined,
+      number: numberNames ? new RegExp(numberNames) : undefined,
+    };
     const localVariables = skipVariables
       ? undefined
       : await getFileLocalVariables(fileKey!, { logger });
@@ -64,6 +69,7 @@ export async function importFromFigma({
       : await getStyles(fileKey!, {
           logger,
           variables: localVariables?.meta.variables,
+          matchers,
         });
     const vars = skipVariables
       ? undefined
@@ -72,11 +78,7 @@ export async function importFromFigma({
           unpublished,
           localVariables,
           additionalVariableIDs: styles?.variableIDs,
-          matchers: {
-            fontFamily: fontFamilyNames ? new RegExp(fontFamilyNames) : undefined,
-            fontWeight: fontWeightNames ? new RegExp(fontWeightNames) : undefined,
-            number: numberNames ? new RegExp(numberNames) : undefined,
-          },
+          matchers,
         });
     if (styles) {
       result.styleCount += styles.count;
